@@ -5,11 +5,10 @@ from datetime import datetime
 import calendar
 import re
 
-# --- CONFIGURACIÓN DE PÁGINA Y TÍTULO ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Liquidador CG", page_icon="💰", layout="wide")
 
 def check_password():
-    """Devuelve True si el usuario ingresó la contraseña correcta."""
     def password_entered():
         if st.session_state["password"] == st.secrets["password"]:
             st.session_state["password_correct"] = True
@@ -29,7 +28,128 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- INTERFAZ DE USUARIO ---
+# --- FUNCIONES DE AYUDA ORIGINALES ---
+def parse_date(fecha_str):
+    if pd.isna(fecha_str) or str(fecha_str).strip() in ["", "NaT"]: return None
+    try: return fecha_str if isinstance(fecha_str, datetime) else pd.to_datetime(fecha_str)
+    except: return None
+
+def safe_float(val):
+    try: return float(val) if pd.notna(val) and str(val).strip() != "" else 0.0
+    except: return 0.0
+
+def calcular_anios_antiguedad(f_ingreso, f_corte):
+    if not f_ingreso: return 0
+    anios = f_corte.year - f_ingreso.year
+    if (f_corte.month, f_corte.day) < (f_ingreso.month, f_ingreso.day): anios -= 1
+    return max(0, anios)
+
+def calcular_diferencia_decimal(f_antigua, f_nueva):
+    if not f_antigua or not f_nueva: return 0.0
+    return round((f_nueva - f_antigua).days / 365.25, 2)
+
+def normalizar_categoria(texto):
+    texto = str(texto).strip().upper()
+    if texto in ["", "NAN", "NONE"]: return None
+    match = re.search(r'\d+', texto)
+    return int(match.group()) if match else texto
+
+# --- GENERADOR DEL CONTEXTO (Idéntico a tu V.5) ---
+def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recibo_actual, id_escalafon, id_general, df_reglas_agente):
+    jerarquia_esc = [str(id_escalafon).strip().upper()]
+    if id_general == 'SI': jerarquia_esc.append('EG')
+    jerarquia_esc.append('')
+
+    def buscar_con_jerarquia(df, condicion_extra):
+        for esc_buscado in jerarquia_esc:
+            filtro_esc = df['ID_ESCALAFON'].fillna('').astype(str).str.strip().str.upper() == esc_buscado
+            resultado = df[filtro_esc & condicion_extra]
+            if not resultado.empty: return resultado.iloc[-1]
+        return pd.Series(dtype='float64')
+
+    def AGENTE(col): return safe_float(agente.get(col, 0))
+
+    def CAT_REF(cat_id, concepto):
+        cat_clean = str(cat_id).strip().upper()
+        if cat_clean.endswith('.0'): cat_clean = cat_clean[:-2]
+        df = hojas['MATRIZ_VALORES_FIJOS']
+        condicion = (df['CATEGORIA'].astype(str).str.upper() == cat_clean) & (df['CONCEPTO'].astype(str).str.upper() == str(concepto).upper())
+        res = buscar_con_jerarquia(df, condicion)
+        return safe_float(res.get('VALORES', 0))
+
+    def CAT(concepto): return CAT_REF(categoria_norm, concepto)
+
+    def FUNC(col):
+        funcion = str(agente.get('FUNCION', '')).strip().upper()
+        df = hojas['MATRIZ_FUNCIONES']
+        condicion = (df['FUNCION'].astype(str).str.upper() == funcion)
+        res = buscar_con_jerarquia(df, condicion)
+        valor = safe_float(res.get(col, 0))
+        
+        if valor == 0.0 and funcion in ["", "NAN"]:
+            cond_sin = (df['FUNCION'].astype(str).str.upper() == "SIN FUNCION")
+            res_sin = buscar_con_jerarquia(df, cond_sin)
+            valor = safe_float(res_sin.get(col, 0))
+            if valor == 0.0 and desc_clase != "":
+                cond_clase = (df['FUNCION'].astype(str).str.upper() == desc_clase)
+                res_clase = buscar_con_jerarquia(df, cond_clase)
+                valor = safe_float(res_clase.get(col, 0))
+        return valor
+        
+    def VALOR_CATEGORIA(col):
+        cat_str = str(categoria_norm).strip().upper()
+        df = hojas['MATRIZ_FUNCIONES']
+        condicion = (df['FUNCION'].astype(str).str.upper() == cat_str)
+        res = buscar_con_jerarquia(df, condicion)
+        return safe_float(res.get(col, 0))
+
+    def TITULO(col):
+        titulo = str(agente.get('TITULOS', '')).strip().upper()
+        if desc_clase == "PROFESIONAL UNIVERSITARIO": titulo = 'PROFESIONAL UNIVERSITARIO'
+        df = hojas['MATRIZ_TITULOS']
+        condicion = (df['TITULO_NOMBRE'].astype(str).str.upper() == titulo)
+        res = buscar_con_jerarquia(df, condicion)
+        return safe_float(res.get(col, 0))
+
+    def PCT_ANTIGUEDAD():
+        df = hojas['MATRIZ_PARAMETROS']
+        condicion = (df['TIPO_PARAMETRO'].astype(str).str.upper() == 'ANTIGUEDAD') & (df['CLAVE_MIN'] <= anios_antig) & (df['CLAVE_MAX'] >= anios_antig)
+        res = buscar_con_jerarquia(df, condicion)
+        return safe_float(res.get('VALOR_RESULTADO', 0))
+
+    def MATRIZ(hoja, col_busqueda, valor, col_resultado):
+        df = hojas[hoja]
+        filtro = df[col_busqueda].astype(str).str.contains(str(valor), case=False, na=False)
+        return safe_float(df[filtro].iloc[0].get(col_resultado, 0)) if filtro.any() else 0.0
+
+    def SUMAR_ATRIBUTO(nombre_columna):
+        suma = 0.0
+        if nombre_columna not in df_reglas_agente.columns: return 0.0
+        for cod_recibo, monto in recibo_actual.items():
+            if isinstance(monto, (int, float)) and str(cod_recibo).startswith('COD_'):
+                filtro = df_reglas_agente['CODIGO'].astype(str).str.strip().str.upper() == str(cod_recibo).upper()
+                if filtro.any():
+                    es_valido = str(df_reglas_agente[filtro].iloc[-1].get(nombre_columna, 'NO')).strip().upper()
+                    if es_valido == 'SI': suma += monto
+        return round(suma, 2)
+
+    def SUMAR_BONIFICABLES(): return SUMAR_ATRIBUTO('BONIFICABLE')
+    def SUMAR_REMUNERATIVOS(): return SUMAR_ATRIBUTO('REMUNERATIVO')
+
+    es_prof = desc_clase == "PROFESIONAL UNIVERSITARIO"
+    aplica_146 = isinstance(categoria_norm, int) or "PRESIDENTE" in str(categoria_norm).upper()
+
+    ctx = recibo_actual.copy()
+    ctx.update({
+        'AGENTE': AGENTE, 'CAT': CAT, 'CAT_REF': CAT_REF, 'FUNC': FUNC, 
+        'VALOR_CATEGORIA': VALOR_CATEGORIA, 'TITULO': TITULO, 'PCT_ANTIGUEDAD': PCT_ANTIGUEDAD, 
+        'MATRIZ': MATRIZ, 'SUMAR_BONIFICABLES': SUMAR_BONIFICABLES, 'SUMAR_REMUNERATIVOS': SUMAR_REMUNERATIVOS,
+        'ES_PROFESIONAL': es_prof, 'NO_ES_PROFESIONAL': not es_prof, 'APLICA_146': aplica_146,
+        'min': min, 'max': max
+    })
+    return ctx
+
+# --- INTERFAZ WEB ---
 st.title("Liquidador de Haberes CG - Claudio Coronel V.1")
 
 with st.sidebar:
@@ -38,122 +158,176 @@ with st.sidebar:
     anio_liq = st.number_input("Año", min_value=2024, max_value=2030, value=datetime.now().year)
     ultimo_dia = calendar.monthrange(anio_liq, mes_liq)[1]
     fecha_corte = datetime(anio_liq, mes_liq, ultimo_dia)
-    
     st.divider()
-    st.info("Suba el archivo Excel con las pestañas: MAESTRO_AGENTES, CATEGORIAS_AGENTES, REGLAS_LIQUIDACION, MATRIZ_VALORES, MATRIZ_FUNCIONES y MATRIZ_PARAMETROS.")
 
-archivo_subido = st.file_uploader("Seleccione la Base de Liquidación (Excel)", type=["xlsx"])
+archivo_subido = st.file_uploader("📂 Seleccione la Base de Liquidación (Excel)", type=["xlsx"])
 
-# --- FUNCIONES NÚCLEO (Preservando tu lógica) ---
-def safe_float(val):
-    try: return float(val) if pd.notna(val) and str(val).strip() != "" else 0.0
-    except: return 0.0
-
-def buscar_con_jerarquia(df, condicion_base, id_escalafon):
-    # Filtro por Organismo
-    filtro_esc = (df['ID_ESCALAFON'].isna()) | (df['ID_ESCALAFON'].astype(str).str.strip() == "") | (df['ID_ESCALAFON'] == id_escalafon)
-    resultado = df[condicion_base & filtro_esc]
-    if not resultado.empty:
-        return resultado.iloc[-1] # Prioriza la fila con ID_ESCALAFON si existe
-    return pd.Series(dtype='float64')
-
-# --- PROCESO DE LIQUIDACIÓN ---
 if archivo_subido:
     try:
-        with st.spinner("Procesando liquidación..."):
+        with st.spinner("⏳ Leyendo Excel y calculando matrices..."):
             hojas = pd.read_excel(archivo_subido, sheet_name=None, engine='openpyxl')
             
-            # Carga de hojas
             df_agentes = hojas["MAESTRO_AGENTES"]
             df_cat_agentes = hojas["CATEGORIAS_AGENTES"]
-            df_reglas = hojas["REGLAS_LIQUIDACION"]
+            df_reglas_global = hojas["REGLAS_LIQUIDACION"]
             
-            resultados_est = []
-            resultados_aud = []
+            recibos_est = []
+            recibos_aud = []
+            agentes_ignorados = [] 
 
+            # BUCLE PRINCIPAL
             for _, agente in df_agentes.iterrows():
                 dni = agente['DNI']
                 id_escalafon = str(agente.get('ID_ESCALAFON', '')).strip().upper()
+                id_general = str(agente.get('ID_GENERAL', 'NO')).strip().upper()
                 
-                # Búsqueda individualizada (DNI + ID_ESCALAFON para Adscriptos)
+                # Lógica Adscriptos (Búsqueda combinada)
                 cat_info_base = df_cat_agentes[df_cat_agentes['DOCUMENTO'] == dni]
+                if cat_info_base.empty: 
+                    agentes_ignorados.append({"DNI": dni, "MOTIVO": "DNI inexistente en CATEGORIAS_AGENTES"})
+                    continue
+                
                 cat_info_exacta = cat_info_base[cat_info_base['ID_ESCALAFON'].astype(str).str.strip().str.upper() == id_escalafon]
                 cat_info = cat_info_exacta if not cat_info_exacta.empty else cat_info_base
                 
-                if cat_info.empty: continue
+                raw_escalafon = cat_info.iloc[0].get('ESCALAFON', '')
+                es_funcionario_eg = False
+                try:
+                    if str(raw_escalafon).strip() != '' and float(raw_escalafon) == 0.0: es_funcionario_eg = True
+                except: pass
+
+                desc_cat_base = cat_info.iloc[0].get('DESCCATEGORIA', '')
+                desc_cat_equip = cat_info.iloc[0].get('DESCCATEQUIP', '')
+                desc_clase = str(cat_info.iloc[0].get('DESCCLASE', '')).strip().upper()
                 
-                info = cat_info.iloc[0]
-                categoria_norm = str(info.get('CATEGORIA', '')).strip()
-                desc_clase = str(info.get('DESC_CLASE', '')).strip().upper()
+                categoria_texto = desc_cat_equip if pd.notna(desc_cat_equip) and str(desc_cat_equip).strip() not in ["", "NAN", "NAT"] else desc_cat_base
+                categoria_norm = normalizar_categoria(categoria_texto)
                 
-                # Contexto de Liquidación
-                # El blindaje: inicializamos todos los códigos en 0.0
-                ctx = {"DNI": dni, "ID_ESCALAFON": id_escalafon, "CATEGORIA": categoria_norm}
-                for cod_r in df_reglas['CODIGO'].unique():
-                    ctx[str(cod_r).strip().upper()] = 0.0
+                if categoria_norm is None: 
+                    agentes_ignorados.append({"DNI": dni, "MOTIVO": "Categoría vacía o inválida"})
+                    continue
 
-                # Definición de funciones internas para las fórmulas
-                def CAT(codigo):
-                    df = hojas['MATRIZ_VALORES']
-                    fila = df[df['CATEGORIA'].astype(str).str.strip() == categoria_norm]
-                    if not fila.empty: return safe_float(fila.iloc[0].get(codigo, 0))
-                    return 0.0
-
-                def CAT_REF(cat, codigo):
-                    df = hojas['MATRIZ_VALORES']
-                    fila = df[df['CATEGORIA'].astype(str).str.strip() == str(cat)]
-                    if not fila.empty: return safe_float(fila.iloc[0].get(codigo, 0))
-                    return 0.0
-
-                def FUNC(col):
-                    func_agente = str(agente.get('FUNCION', '')).strip().upper()
-                    if func_agente in ["", "NAN"]: func_agente = "SIN FUNCION"
+                # Filtrado de Reglas
+                reglas_validas = []
+                for _, regla in df_reglas_global.iterrows():
+                    regla_esc = str(regla.get('ID_ESCALAFON', '')).strip().upper()
+                    if regla_esc == 'NAN': regla_esc = ''
+                    es_regla_func = str(regla.get('FUNCIONARIO_EG', 'NO')).strip().upper() == 'SI'
                     
-                    df = hojas['MATRIZ_FUNCIONES']
-                    condicion = (df['FUNCION'].astype(str).str.upper() == func_agente)
-                    res = buscar_con_jerarquia(df, condicion, id_escalafon)
-                    valor = safe_float(res.get(col, 0))
+                    if es_funcionario_eg:
+                        if es_regla_func: reglas_validas.append(regla)
+                    else:
+                        if not es_regla_func:
+                            if regla_esc == id_escalafon or regla_esc == '': reglas_validas.append(regla)
+                            elif regla_esc == 'EG' and id_general == 'SI': reglas_validas.append(regla)
+                        
+                df_reglas_agente = pd.DataFrame(reglas_validas)
+                if df_reglas_agente.empty:
+                    agentes_ignorados.append({"DNI": dni, "MOTIVO": "Sin reglas válidas"})
+                    continue
                     
-                    # Cascada
-                    if valor == 0.0 and func_agente == "SIN FUNCION" and desc_clase != "":
-                        cond_clase = (df['FUNCION'].astype(str).str.upper() == desc_clase)
-                        res_clase = buscar_con_jerarquia(df, cond_clase, id_escalafon)
-                        valor = safe_float(res_clase.get(col, 0))
-                    return valor
+                df_reglas_agente = df_reglas_agente.sort_values(by="ORDEN")
 
-                def AGENTE(col): return agente.get(col, 0)
+                f_normal = parse_date(agente.get('AL ESTADO NO AL ORGANISMO'))
+                f_base = parse_date(agente.get('INGRESO_BASE'))
+                
+                # --- LIQUIDACIÓN ESTÁNDAR ---
+                anios_est = calcular_anios_antiguedad(f_normal, fecha_corte)
+                recibo_est = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_est}
+                for col in agente.index:
+                    if str(col).startswith("COD_"): recibo_est[col] = safe_float(agente.get(col, 0))
+                
+                # Blindaje Estándar
+                for cod_r in df_reglas_agente['CODIGO']:
+                    cod_limpio = str(cod_r).strip().upper()
+                    if cod_limpio not in recibo_est: recibo_est[cod_limpio] = 0.0
 
-                # Ejecución de reglas
-                df_reglas_ord = df_reglas.sort_values("ORDEN")
-                for _, regla in df_reglas_ord.iterrows():
+                for _, regla in df_reglas_agente.iterrows():
                     cod = str(regla['CODIGO']).strip().upper()
-                    condicion = str(regla.get('CONDICION', 'True')).strip()
-                    if condicion == "" or pd.isna(regla['CONDICION']): condicion = "True"
-                    
+                    cond = str(regla.get('CONDICION', ''))
+                    form = str(regla['FORMULA'])
+                    ctx = crear_contexto(agente, categoria_norm, desc_clase, anios_est, hojas, recibo_est, id_escalafon, id_general, df_reglas_agente)
                     try:
-                        if eval(condicion, {"AGENTE": AGENTE, "CATEGORIA": safe_float(categoria_norm)}, ctx):
-                            formula = str(regla['FORMULA'])
-                            # El corazón matemático
-                            ctx[cod] = eval(formula, {"CAT": CAT, "CAT_REF": CAT_REF, "FUNC": FUNC, "AGENTE": AGENTE, "min": min, "max": max}, ctx)
+                        cumple = eval(cond, {}, ctx) if cond and cond.strip() not in ['nan', ''] else True
+                        recibo_est[cod] = round(eval(form, {}, ctx), 2) if cumple and form and form.strip() != 'nan' else 0.0
                     except:
-                        ctx[cod] = 0.0
-                
-                resultados_est.append(ctx.copy())
+                        recibo_est[cod] = 0.0
+                recibos_est.append(recibo_est)
 
-            # Generación de Excel de salida
-            df_final = pd.DataFrame(resultados_est)
-            
+                # --- LIQUIDACIÓN AUDITORÍA ---
+                f_auditoria = f_normal
+                uso_base, dif = "NO", 0.0
+                if f_base and f_normal and (f_base < f_normal):
+                    f_auditoria, uso_base = f_base, "SI"
+                    dif = calcular_diferencia_decimal(f_base, f_normal)
+
+                anios_aud = calcular_anios_antiguedad(f_auditoria, fecha_corte)
+                recibo_aud = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_aud}
+                for col in agente.index:
+                    if str(col).startswith("COD_"): recibo_aud[col] = safe_float(agente.get(col, 0))
+                
+                # Blindaje Auditoría
+                for cod_r in df_reglas_agente['CODIGO']:
+                    cod_limpio = str(cod_r).strip().upper()
+                    if cod_limpio not in recibo_aud: recibo_aud[cod_limpio] = 0.0
+                    
+                for _, regla in df_reglas_agente.iterrows():
+                    cod = str(regla['CODIGO']).strip().upper()
+                    cond = str(regla.get('CONDICION', ''))
+                    form = str(regla['FORMULA'])
+                    ctx = crear_contexto(agente, categoria_norm, desc_clase, anios_aud, hojas, recibo_aud, id_escalafon, id_general, df_reglas_agente)
+                    try:
+                        cumple = eval(cond, {}, ctx) if cond and cond.strip() not in ['nan', ''] else True
+                        recibo_aud[cod] = round(eval(form, {}, ctx), 2) if cumple and form and form.strip() != 'nan' else 0.0
+                    except:
+                        recibo_aud[cod] = 0.0
+                    
+                recibo_aud["INGRESO_BASE"] = uso_base
+                recibo_aud["DIFERENCIA_ANIOS"] = dif
+                recibos_aud.append(recibo_aud)
+
+            # --- EXPORTACIÓN ---
+            df_est = pd.DataFrame(recibos_est)
+            df_aud = pd.DataFrame(recibos_aud)
+
+            orden_columnas = [
+                "DNI", "FUNCION", "CATEGORIA", "ESCALAFON", "ANIOS_ANTIGUEDAD",
+                "COD_001", "COD_003", "COD_005", "COD_008", "COD_010", "COD_011", "COD_012", "COD_013", "COD_017", "COD_019",
+                "COD_020", "COD_022", "COD_029", "COD_036", "COD_042", "COD_050", "COD_054", "COD_056", "COD_057",
+                "COD_058", "COD_060", "COD_092", "COD_100", "COD_101", "COD_105", "COD_109", "COD_118", "COD_126",
+                "COD_130", "COD_136", "COD_138", "COD_140", "COD_142", "COD_146", "COD_166", "COD_170", "COD_174",
+                "COD_176", "COD_177", "COD_178", "COD_179", "COD_185", "COD_186", "COD_192", "COD_201", "COD_204",
+                "COD_206", "COD_208", "COD-210-212", "COD_214", "COD_219", "COD_222", "COD_225", "COD_226", "COD_228",
+                "COD_234", "COD_235", "COD_236", "COD_239/240", "COD_243", "COD_246", "COD_248", "COD_264 - 265", "COD_266",
+                "COD_272", "COD_280", "COD_282", "COD_285", "COD_194", "COD_195", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
+            ]
+
+            if not df_est.empty:
+                for col in orden_columnas:
+                    if col not in df_est.columns: df_est[col] = 0.0
+                df_est = df_est[[c for c in orden_columnas if c in df_est.columns]]
+                
+            if not df_aud.empty:
+                orden_aud = orden_columnas + ["INGRESO_BASE", "DIFERENCIA_ANIOS"]
+                for col in orden_aud:
+                    if col not in df_aud.columns: df_aud[col] = 0.0
+                df_aud = df_aud[[c for c in orden_aud if c in df_aud.columns]]
+
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_final.to_excel(writer, index=False, sheet_name='LIQUIDACION')
+                if not df_est.empty: df_est.to_excel(writer, sheet_name='LIQ_ESTANDAR', index=False)
+                if not df_aud.empty: df_aud.to_excel(writer, sheet_name='LIQ_AUDITORIA', index=False)
+                if agentes_ignorados: pd.DataFrame(agentes_ignorados).to_excel(writer, sheet_name='AGENTES_IGNORADOS', index=False)
+
+            st.success(f"✅ Éxito. Se liquidaron {len(recibos_est)} agentes.")
+            if agentes_ignorados: st.warning(f"⚠️ Atención: Se ignoraron {len(agentes_ignorados)} agentes.")
             
-            st.success("✅ Procesamiento completado.")
             st.download_button(
-                label="📥 Descargar Resultado",
+                label="📥 Descargar Excel Resultante",
                 data=output.getvalue(),
                 file_name=f"LIQUIDACION_{mes_liq}_{anio_liq}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
     except Exception as e:
-        st.error(f"Error al procesar el archivo: {e}")
+        st.error(f"❌ Error al procesar el archivo: {e}")
