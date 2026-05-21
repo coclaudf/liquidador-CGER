@@ -54,15 +54,23 @@ def normalizar_categoria(texto):
     match = re.search(r'\d+', texto)
     return int(match.group()) if match else texto
 
-# --- GENERADOR DEL CONTEXTO (Idéntico a tu V.5) ---
+# --- GENERADOR DEL CONTEXTO (Con protección anti-KeyError) ---
 def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recibo_actual, id_escalafon, id_general, df_reglas_agente):
     jerarquia_esc = [str(id_escalafon).strip().upper()]
     if id_general == 'SI': jerarquia_esc.append('EG')
     jerarquia_esc.append('')
 
     def buscar_con_jerarquia(df, condicion_extra):
+        # Normalizamos nombres de columnas para evitar espacios fantasmas en las matrices
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
         for esc_buscado in jerarquia_esc:
-            filtro_esc = df['ID_ESCALAFON'].fillna('').astype(str).str.strip().str.upper() == esc_buscado
+            if 'ID_ESCALAFON' in df.columns:
+                filtro_esc = df['ID_ESCALAFON'].fillna('').astype(str).str.strip().str.upper() == esc_buscado
+            else:
+                # Si la matriz de Excel no posee la columna, matchea únicamente el caso base vacío
+                filtro_esc = pd.Series([True if esc_buscado == '' else False] * len(df), index=df.index)
+                
             resultado = df[filtro_esc & condicion_extra]
             if not resultado.empty: return resultado.iloc[-1]
         return pd.Series(dtype='float64')
@@ -73,6 +81,7 @@ def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recib
         cat_clean = str(cat_id).strip().upper()
         if cat_clean.endswith('.0'): cat_clean = cat_clean[:-2]
         df = hojas['MATRIZ_VALORES_FIJOS']
+        df.columns = [str(c).strip().upper() for c in df.columns]
         condicion = (df['CATEGORIA'].astype(str).str.upper() == cat_clean) & (df['CONCEPTO'].astype(str).str.upper() == str(concepto).upper())
         res = buscar_con_jerarquia(df, condicion)
         return safe_float(res.get('VALORES', 0))
@@ -82,54 +91,63 @@ def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recib
     def FUNC(col):
         funcion = str(agente.get('FUNCION', '')).strip().upper()
         df = hojas['MATRIZ_FUNCIONES']
+        df.columns = [str(c).strip().upper() for c in df.columns]
         condicion = (df['FUNCION'].astype(str).str.upper() == funcion)
         res = buscar_con_jerarquia(df, condicion)
-        valor = safe_float(res.get(col, 0))
+        valor = safe_float(res.get(col.strip().upper(), 0))
         
         if valor == 0.0 and funcion in ["", "NAN"]:
             cond_sin = (df['FUNCION'].astype(str).str.upper() == "SIN FUNCION")
             res_sin = buscar_con_jerarquia(df, cond_sin)
-            valor = safe_float(res_sin.get(col, 0))
+            valor = safe_float(res_sin.get(col.strip().upper(), 0))
             if valor == 0.0 and desc_clase != "":
                 cond_clase = (df['FUNCION'].astype(str).str.upper() == desc_clase)
                 res_clase = buscar_con_jerarquia(df, cond_clase)
-                valor = safe_float(res_clase.get(col, 0))
+                valor = safe_float(res_clase.get(col.strip().upper(), 0))
         return valor
         
     def VALOR_CATEGORIA(col):
         cat_str = str(categoria_norm).strip().upper()
         df = hojas['MATRIZ_FUNCIONES']
+        df.columns = [str(c).strip().upper() for c in df.columns]
         condicion = (df['FUNCION'].astype(str).str.upper() == cat_str)
         res = buscar_con_jerarquia(df, condicion)
-        return safe_float(res.get(col, 0))
+        return safe_float(res.get(col.strip().upper(), 0))
 
     def TITULO(col):
         titulo = str(agente.get('TITULOS', '')).strip().upper()
         if desc_clase == "PROFESIONAL UNIVERSITARIO": titulo = 'PROFESIONAL UNIVERSITARIO'
         df = hojas['MATRIZ_TITULOS']
+        df.columns = [str(c).strip().upper() for c in df.columns]
         condicion = (df['TITULO_NOMBRE'].astype(str).str.upper() == titulo)
         res = buscar_con_jerarquia(df, condicion)
-        return safe_float(res.get(col, 0))
+        return safe_float(res.get(col.strip().upper(), 0))
 
     def PCT_ANTIGUEDAD():
         df = hojas['MATRIZ_PARAMETROS']
+        df.columns = [str(c).strip().upper() for c in df.columns]
         condicion = (df['TIPO_PARAMETRO'].astype(str).str.upper() == 'ANTIGUEDAD') & (df['CLAVE_MIN'] <= anios_antig) & (df['CLAVE_MAX'] >= anios_antig)
         res = buscar_con_jerarquia(df, condicion)
         return safe_float(res.get('VALOR_RESULTADO', 0))
 
     def MATRIZ(hoja, col_busqueda, valor, col_resultado):
         df = hojas[hoja]
-        filtro = df[col_busqueda].astype(str).str.contains(str(valor), case=False, na=False)
-        return safe_float(df[filtro].iloc[0].get(col_resultado, 0)) if filtro.any() else 0.0
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        filtro = df[col_busqueda.strip().upper()].astype(str).str.contains(str(valor), case=False, na=False)
+        return safe_float(df[filtro].iloc[0].get(col_resultado.strip().upper(), 0)) if filtro.any() else 0.0
 
     def SUMAR_ATRIBUTO(nombre_columna):
         suma = 0.0
-        if nombre_columna not in df_reglas_agente.columns: return 0.0
+        # Normalizar columnas de la regla actual
+        df_reglas_agente.columns = [str(c).strip().upper() for c in df_reglas_agente.columns]
+        col_busqueda = nombre_columna.strip().upper()
+        
+        if col_busqueda not in df_reglas_agente.columns: return 0.0
         for cod_recibo, monto in recibo_actual.items():
             if isinstance(monto, (int, float)) and str(cod_recibo).startswith('COD_'):
                 filtro = df_reglas_agente['CODIGO'].astype(str).str.strip().str.upper() == str(cod_recibo).upper()
                 if filtro.any():
-                    es_valido = str(df_reglas_agente[filtro].iloc[-1].get(nombre_columna, 'NO')).strip().upper()
+                    es_valido = str(df_reglas_agente[filtro].iloc[-1].get(col_busqueda, 'NO')).strip().upper()
                     if es_valido == 'SI': suma += monto
         return round(suma, 2)
 
@@ -167,6 +185,10 @@ if archivo_subido:
         with st.spinner("⏳ Leyendo Excel y calculando matrices..."):
             hojas = pd.read_excel(archivo_subido, sheet_name=None, engine='openpyxl')
             
+            # Normalizar los nombres de las columnas de las hojas principales de entrada
+            for name in hojas:
+                hojas[name].columns = [str(c).strip().upper() for c in hojas[name].columns]
+            
             df_agentes = hojas["MAESTRO_AGENTES"]
             df_cat_agentes = hojas["CATEGORIAS_AGENTES"]
             df_reglas_global = hojas["REGLAS_LIQUIDACION"]
@@ -181,14 +203,17 @@ if archivo_subido:
                 id_escalafon = str(agente.get('ID_ESCALAFON', '')).strip().upper()
                 id_general = str(agente.get('ID_GENERAL', 'NO')).strip().upper()
                 
-                # Lógica Adscriptos (Búsqueda combinada)
+                # Lógica Adscriptos con control de existencia de columna
                 cat_info_base = df_cat_agentes[df_cat_agentes['DOCUMENTO'] == dni]
                 if cat_info_base.empty: 
                     agentes_ignorados.append({"DNI": dni, "MOTIVO": "DNI inexistente en CATEGORIAS_AGENTES"})
                     continue
                 
-                cat_info_exacta = cat_info_base[cat_info_base['ID_ESCALAFON'].astype(str).str.strip().str.upper() == id_escalafon]
-                cat_info = cat_info_exacta if not cat_info_exacta.empty else cat_info_base
+                if 'ID_ESCALAFON' in cat_info_base.columns:
+                    cat_info_exacta = cat_info_base[cat_info_base['ID_ESCALAFON'].astype(str).str.strip().str.upper() == id_escalafon]
+                    cat_info = cat_info_exacta if not cat_info_exacta.empty else cat_info_base
+                else:
+                    cat_info = cat_info_base
                 
                 raw_escalafon = cat_info.iloc[0].get('ESCALAFON', '')
                 es_funcionario_eg = False
@@ -235,7 +260,7 @@ if archivo_subido:
                 anios_est = calcular_anios_antiguedad(f_normal, fecha_corte)
                 recibo_est = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_est}
                 for col in agente.index:
-                    if str(col).startswith("COD_"): recibo_est[col] = safe_float(agente.get(col, 0))
+                    if str(col).startswith("COD_"): recibo_est[str(col).strip().upper()] = safe_float(agente.get(col, 0))
                 
                 # Blindaje Estándar
                 for cod_r in df_reglas_agente['CODIGO']:
@@ -264,7 +289,7 @@ if archivo_subido:
                 anios_aud = calcular_anios_antiguedad(f_auditoria, fecha_corte)
                 recibo_aud = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_aud}
                 for col in agente.index:
-                    if str(col).startswith("COD_"): recibo_aud[col] = safe_float(agente.get(col, 0))
+                    if str(col).startswith("COD_"): recibo_aud[str(col).strip().upper()] = safe_float(agente.get(col, 0))
                 
                 # Blindaje Auditoría
                 for cod_r in df_reglas_agente['CODIGO']:
@@ -297,8 +322,8 @@ if archivo_subido:
                 "COD_058", "COD_060", "COD_092", "COD_100", "COD_101", "COD_105", "COD_109", "COD_118", "COD_126",
                 "COD_130", "COD_136", "COD_138", "COD_140", "COD_142", "COD_146", "COD_166", "COD_170", "COD_174",
                 "COD_176", "COD_177", "COD_178", "COD_179", "COD_185", "COD_186", "COD_192", "COD_201", "COD_204",
-                "COD_206", "COD_208", "COD-210-212", "COD_214", "COD_219", "COD_222", "COD_225", "COD_226", "COD_228",
-                "COD_234", "COD_235", "COD_236", "COD_239/240", "COD_243", "COD_246", "COD_248", "COD_264 - 265", "COD_266",
+                "COD_206", "COD_208", "COD-210", "COD_212", "COD_214", "COD_219", "COD_222", "COD_225", "COD_226", "COD_228",
+                "COD_234", "COD_235", "COD_236", "COD_239", "COD_240", "COD_243", "COD_246", "COD_248", "COD_264 - 265", "COD_266",
                 "COD_272", "COD_280", "COD_282", "COD_285", "COD_194", "COD_195", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
             ]
 
