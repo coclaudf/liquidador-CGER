@@ -322,7 +322,7 @@ if archivo_subido:
                 "COD_058", "COD_060", "COD_092", "COD_100", "COD_101", "COD_105", "COD_109", "COD_118", "COD_126",
                 "COD_130", "COD_136", "COD_138", "COD_140", "COD_142", "COD_146", "COD_166", "COD_170", "COD_174",
                 "COD_176", "COD_177", "COD_178", "COD_179", "COD_185", "COD_186", "COD_192", "COD_201", "COD_204",
-                "COD_206", "COD_208", "COD_210", "COD_212", "COD_214", "COD_219", "COD_222", "COD_225", "COD_226", "COD_228",
+                "COD_206", "COD_208", "COD_210", "COD_212", "COD_214", "COD_219", "COD_220", "COD_221", "COD_222", "COD_225", "COD_226", "COD_228",
                 "COD_234", "COD_235", "COD_236", "COD_239", "COD_240", "COD_243", "COD_246", "COD_248", "COD_264", "COD_265", "COD_266",
                 "COD_272", "COD_280", "COD_282", "COD_285", "COD_194", "COD_195", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
             ]
