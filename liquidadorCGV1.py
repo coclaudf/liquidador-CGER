@@ -325,8 +325,10 @@ if archivo_subido:
                 "COD_177", "COD_178", "COD_179", "COD_180", "COD_181", "COD_183", "COD_184", "COD_185", "COD_186", "COD_188",
                 "COD_192", "COD_194", "COD_195", "COD_201", "COD_204", "COD_206", "COD_208", "COD_210", "COD_212", "COD_214",
                 "COD_219", "COD_220", "COD_221", "COD_222", "COD_225", "COD_226", "COD_228", "COD_232", "COD_234", "COD_235",
-                "COD_236", "COD_239", "COD_240", "COD_242", "COD_243", "COD_244", "COD_246", "COD_248", "COD_264", "COD_265",
-                "COD_266","COD_272", "COD_280", "COD_282", "COD_285", "COD_286", "COD_288", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
+                "COD_236", "COD_239", "COD_240", "COD_242", "COD_243", "COD_244", "COD_246", "COD_248", "COD_260", "COD_264",
+                "COD_265", "COD_266", "COD_272", "COD_280", "COD_282", "COD_285", "COD_286", "COD_288", "COD_306", "COD_312",
+                "COD_313", "COD_316", "COD_317", "COD_319", "COD_477", "COD_502", "COD_505", "COD_510", "COD_532", "COD_592",
+                "COD_600", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
             ]
 
             if not df_est.empty:
