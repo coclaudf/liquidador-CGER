@@ -317,7 +317,7 @@ if archivo_subido:
 
             orden_columnas = [
                 "DNI", "FUNCION", "CATEGORIA", "ESCALAFON", "ANIOS_ANTIGUEDAD",
-                "COD_001", "COD_003", "COD_004", "COD_005", "COD_006", "COD_008", "COD_010", "COD_011", "COD_012", "COD_013",
+                "COD_001", "COD_002", "COD_003", "COD_004", "COD_005", "COD_006", "COD_008", "COD_010", "COD_011", "COD_012", "COD_013",
                 "COD_014", "COD_017", "COD_019", "COD_020", "COD_022", "COD_024", "COD_029", "COD_036", "COD_038", "COD_041",
                 "COD_042", "COD_050", "COD_054", "COD_056", "COD_057", "COD_058", "COD_060", "COD_081", "COD_090", "COD_092",
                 "COD_100", "COD_101", "COD_105", "COD_109", "COD_110", "COD_116", "COD_117", "COD_118", "COD_126", "COD_130",
