@@ -326,9 +326,11 @@ if archivo_subido:
                 "COD_192", "COD_194", "COD_195", "COD_201", "COD_204", "COD_206", "COD_208", "COD_210", "COD_212", "COD_214",
                 "COD_219", "COD_220", "COD_221", "COD_222", "COD_225", "COD_226", "COD_228", "COD_232", "COD_234", "COD_235",
                 "COD_236", "COD_239", "COD_240", "COD_242", "COD_243", "COD_244", "COD_246", "COD_248", "COD_260", "COD_264",
-                "COD_265", "COD_266", "COD_272", "COD_280", "COD_282", "COD_285", "COD_286", "COD_288", "COD_306", "COD_312",
-                "COD_313", "COD_316", "COD_317", "COD_319", "COD_477", "COD_502", "COD_505", "COD_510", "COD_532", "COD_592",
-                "COD_600", "BRUTO", "SUMA_BONIFIC", "PORC_ANTIG"
+                "COD_265", "COD_266", "COD_272", "COD_280", "COD_282", "COD_285", "COD_286", "COD_288",
+                "COD_319", "BRUTO", "COD_302", "COD_306", "COD_312", "COD_313", "COD_316", "COD_1317", "COD_317", "COD_327",
+                "COD_330", "COD_332", "COD_333", "COD_335", "COD_338", "COD_342", "COD_344", "COD_347", "COD_349", "COD_350",
+                "COD_355", "COD_358", "COD_366", "COD_368", "COD_412", "COD_477", "COD_480", "COD_491", "COD_500", "COD_502",
+                "COD_503", "COD_505", "COD_510", "COD_524", "COD_525", "COD_1532", "COD_532", "COD_592", "COD_600", "NETO"
             ]
 
             if not df_est.empty:
