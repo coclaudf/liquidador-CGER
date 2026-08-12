@@ -54,23 +54,19 @@ def normalizar_categoria(texto):
     match = re.search(r'\d+', texto)
     return int(match.group()) if match else texto
 
-# --- GENERADOR DEL CONTEXTO (Con protección anti-KeyError) ---
+# --- GENERADOR DEL CONTEXTO ---
 def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recibo_actual, id_escalafon, id_general, df_reglas_agente):
     jerarquia_esc = [str(id_escalafon).strip().upper()]
     if id_general == 'SI': jerarquia_esc.append('EG')
     jerarquia_esc.append('')
 
     def buscar_con_jerarquia(df, condicion_extra):
-        # Normalizamos nombres de columnas para evitar espacios fantasmas en las matrices
         df.columns = [str(c).strip().upper() for c in df.columns]
-        
         for esc_buscado in jerarquia_esc:
             if 'ID_ESCALAFON' in df.columns:
                 filtro_esc = df['ID_ESCALAFON'].fillna('').astype(str).str.strip().str.upper() == esc_buscado
             else:
-                # Si la matriz de Excel no posee la columna, matchea únicamente el caso base vacío
                 filtro_esc = pd.Series([True if esc_buscado == '' else False] * len(df), index=df.index)
-                
             resultado = df[filtro_esc & condicion_extra]
             if not resultado.empty: return resultado.iloc[-1]
         return pd.Series(dtype='float64')
@@ -138,7 +134,6 @@ def crear_contexto(agente, categoria_norm, desc_clase, anios_antig, hojas, recib
 
     def SUMAR_ATRIBUTO(nombre_columna):
         suma = 0.0
-        # Normalizar columnas de la regla actual
         df_reglas_agente.columns = [str(c).strip().upper() for c in df_reglas_agente.columns]
         col_busqueda = nombre_columna.strip().upper()
         
@@ -177,6 +172,9 @@ with st.sidebar:
     ultimo_dia = calendar.monthrange(anio_liq, mes_liq)[1]
     fecha_corte = datetime(anio_liq, mes_liq, ultimo_dia)
     st.divider()
+    
+    # Marcador de posición para los logs (se llenará después de procesar)
+    sidebar_log_placeholder = st.empty()
 
 archivo_subido = st.file_uploader("📂 Seleccione la Base de Liquidación (Excel)", type=["xlsx"])
 
@@ -185,7 +183,6 @@ if archivo_subido:
         with st.spinner("⏳ Leyendo Excel y calculando matrices..."):
             hojas = pd.read_excel(archivo_subido, sheet_name=None, engine='openpyxl')
             
-            # Normalizar los nombres de las columnas de las hojas principales de entrada
             for name in hojas:
                 hojas[name].columns = [str(c).strip().upper() for c in hojas[name].columns]
             
@@ -195,15 +192,14 @@ if archivo_subido:
             
             recibos_est = []
             recibos_aud = []
-            agentes_ignorados = [] 
+            agentes_ignorados = []
+            codigos_excluidos_log = [] # Nuevo registro para el sidebar
 
-            # BUCLE PRINCIPAL
             for _, agente in df_agentes.iterrows():
                 dni = agente['DNI']
                 id_escalafon = str(agente.get('ID_ESCALAFON', '')).strip().upper()
                 id_general = str(agente.get('ID_GENERAL', 'NO')).strip().upper()
                 
-                # Lógica Adscriptos con control de existencia de columna
                 cat_info_base = df_cat_agentes[df_cat_agentes['DOCUMENTO'] == dni]
                 if cat_info_base.empty: 
                     agentes_ignorados.append({"DNI": dni, "MOTIVO": "DNI inexistente en CATEGORIAS_AGENTES"})
@@ -232,7 +228,7 @@ if archivo_subido:
                     agentes_ignorados.append({"DNI": dni, "MOTIVO": "Categoría vacía o inválida"})
                     continue
 
-                # Filtrado de Reglas
+                # Filtrado de Reglas con Tracking de Exclusiones
                 reglas_validas = []
                 for _, regla in df_reglas_global.iterrows():
                     regla_esc = str(regla.get('ID_ESCALAFON', '')).strip().upper()
@@ -240,11 +236,19 @@ if archivo_subido:
                     es_regla_func = str(regla.get('FUNCIONARIO_EG', 'NO')).strip().upper() == 'SI'
                     
                     if es_funcionario_eg:
-                        if es_regla_func: reglas_validas.append(regla)
+                        if es_regla_func: 
+                            reglas_validas.append(regla)
+                        elif regla_esc == id_escalafon or regla_esc == '' or (regla_esc == 'EG' and id_general == 'SI'):
+                            # Registramos códigos que hubieran aplicado si no fuera por el filtro Funcionario EG
+                            codigos_excluidos_log.append({"DNI": dni, "ESCALAFON": id_escalafon, "CODIGO": regla['CODIGO'], "MOTIVO": "Agente es EG, pero regla no dice FUNCIONARIO_EG=SI"})
                     else:
                         if not es_regla_func:
-                            if regla_esc == id_escalafon or regla_esc == '': reglas_validas.append(regla)
-                            elif regla_esc == 'EG' and id_general == 'SI': reglas_validas.append(regla)
+                            if regla_esc == id_escalafon or regla_esc == '': 
+                                reglas_validas.append(regla)
+                            elif regla_esc == 'EG' and id_general == 'SI': 
+                                reglas_validas.append(regla)
+                        elif regla_esc == id_escalafon or regla_esc == '' or (regla_esc == 'EG' and id_general == 'SI'):
+                            codigos_excluidos_log.append({"DNI": dni, "ESCALAFON": id_escalafon, "CODIGO": regla['CODIGO'], "MOTIVO": "Agente NO es EG, regla es exclusiva para FUNCIONARIO_EG=SI"})
                         
                 df_reglas_agente = pd.DataFrame(reglas_validas)
                 if df_reglas_agente.empty:
@@ -259,10 +263,7 @@ if archivo_subido:
                 # --- LIQUIDACIÓN ESTÁNDAR ---
                 anios_est = calcular_anios_antiguedad(f_normal, fecha_corte)
                 recibo_est = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_est}
-                for col in agente.index:
-                    if str(col).startswith("COD_"): recibo_est[str(col).strip().upper()] = safe_float(agente.get(col, 0))
                 
-                # Blindaje Estándar
                 for cod_r in df_reglas_agente['CODIGO']:
                     cod_limpio = str(cod_r).strip().upper()
                     if cod_limpio not in recibo_est: recibo_est[cod_limpio] = 0.0
@@ -288,10 +289,7 @@ if archivo_subido:
 
                 anios_aud = calcular_anios_antiguedad(f_auditoria, fecha_corte)
                 recibo_aud = {"DNI": dni, "FUNCION": str(agente.get('FUNCION','')), "CATEGORIA": categoria_norm, "ESCALAFON": id_escalafon, "ANIOS_ANTIGUEDAD": anios_aud}
-                for col in agente.index:
-                    if str(col).startswith("COD_"): recibo_aud[str(col).strip().upper()] = safe_float(agente.get(col, 0))
                 
-                # Blindaje Auditoría
                 for cod_r in df_reglas_agente['CODIGO']:
                     cod_limpio = str(cod_r).strip().upper()
                     if cod_limpio not in recibo_aud: recibo_aud[cod_limpio] = 0.0
@@ -310,6 +308,20 @@ if archivo_subido:
                 recibo_aud["INGRESO_BASE"] = uso_base
                 recibo_aud["DIFERENCIA_ANIOS"] = dif
                 recibos_aud.append(recibo_aud)
+
+            # --- RENDERIZADO DEL LOG EN LA BARRA LATERAL ---
+            with sidebar_log_placeholder.container():
+                st.header("📝 Logs de Validaciones EG")
+                if codigos_excluidos_log:
+                    st.warning(f"Se excluyeron {len(codigos_excluidos_log)} reglas por inconsistencias con el perfil Funcionario EG.")
+                    with st.expander("Inspeccionar exclusiones"):
+                        df_log = pd.DataFrame(codigos_excluidos_log)
+                        st.dataframe(df_log)
+                        
+                        csv_log = df_log.to_csv(index=False).encode('utf-8')
+                        st.download_button("Descargar Log (CSV)", data=csv_log, file_name="log_exclusiones_eg.csv", mime="text/csv")
+                else:
+                    st.success("Sin conflictos con reglas de Funcionarios EG.")
 
             # --- EXPORTACIÓN ---
             df_est = pd.DataFrame(recibos_est)
